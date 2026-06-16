@@ -18,7 +18,58 @@ Usage (once implemented):
     print(result["error"])   # None on success
 """
 
+import json
+import os
+
+from dotenv import load_dotenv
+from groq import Groq
+
 from tools import search_listings, suggest_outfit, create_fit_card
+
+load_dotenv()
+
+# ── query parser ──────────────────────────────────────────────────────────────
+
+_MODEL = "llama-3.1-8b-instant"
+
+_SYSTEM_PROMPT = """You are a parser for a secondhand clothing search agent. Extract structured \
+search parameters from the user's request. Return ONLY a JSON object with exactly these keys:
+
+- "description": string of garment keywords (type, style, color, era, brand). Remove any size or \
+price wording from this string. Never empty.
+- "size": the requested size as a short code, or null if none is mentioned. Normalize words to \
+codes: small->"S", medium->"M", large->"L", extra large->"XL". Leave shoe/numeric/waist sizes as \
+written ("8", "W30").
+- "max_price": the maximum price as a number with no currency symbol, or null if no price is \
+mentioned. Treat "under $30", "below 30", "max $30", "$30 or less", and "between $20 and $40" (->40) \
+as the ceiling.
+
+Never invent a size or price the user didn't state - use null.
+Output valid JSON only. No prose, no markdown.
+
+Examples:
+"looking for a vintage graphic tee under $30" -> {"description":"vintage graphic tee","size":null,"max_price":30}
+"90s track jacket in size M" -> {"description":"90s track jacket","size":"M","max_price":null}
+"black combat boots size 8" -> {"description":"black combat boots","size":"8","max_price":null}
+"designer ballgown size XXS under $5" -> {"description":"designer ballgown","size":"XXS","max_price":5}"""
+
+
+def parse_query(query: str) -> dict:
+    """Call the Groq LLM to extract description, size, and max_price from a natural-language query."""
+    client = Groq(api_key=os.environ["GROQ_API_KEY"])
+    resp = client.chat.completions.create(
+        model=_MODEL,
+        temperature=0,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": query},
+        ],
+    )
+    content = resp.choices[0].message.content
+    if not content:
+        raise ValueError("Groq returned an empty response for query parsing.")
+    return json.loads(content)
 
 
 # ── session state ─────────────────────────────────────────────────────────────
@@ -92,9 +143,54 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     Before writing code, complete the Planning Loop and State Management sections
     of planning.md — your implementation should match what you described there.
     """
-    # TODO: implement the planning loop
+    # Step 1: init session
     session = _new_session(query, wardrobe)
-    session["error"] = "Planning loop not yet implemented."
+
+    # Step 2: parse query — fall back to raw query on any failure
+    try:
+        session["parsed"] = parse_query(query)
+    except Exception:
+        session["parsed"] = {"description": query, "size": None, "max_price": None}
+
+    parsed = session["parsed"]
+    description = parsed.get("description", query)
+    size = parsed.get("size")
+    max_price = parsed.get("max_price")
+
+    # Step 3: search listings
+    session["search_results"] = search_listings(description, size, max_price)
+
+    if not session["search_results"]:
+        if size:
+            # Retry without size filter before giving up
+            session["search_results"] = search_listings(description, None, max_price)
+
+        if not session["search_results"]:
+            price_clause = f" under ${max_price}" if max_price is not None else ""
+            if size:
+                session["error"] = (
+                    f"No items matched '{description}' in size {size}{price_clause}. "
+                    f"We already tried broadening by removing the size filter and still found nothing — "
+                    f"try raising your price or using different keywords."
+                )
+            else:
+                session["error"] = (
+                    f"No items matched '{description}'{price_clause}. "
+                    f"Try raising your price or using different keywords."
+                )
+            return session
+
+    # Step 4: select top result
+    session["selected_item"] = session["search_results"][0]
+
+    # Step 5: suggest outfit
+    session["outfit_suggestion"] = suggest_outfit(session["selected_item"], wardrobe)
+
+    # Step 6: create fit card (only if outfit string is non-empty)
+    if session["outfit_suggestion"] and session["outfit_suggestion"].strip():
+        session["fit_card"] = create_fit_card(session["outfit_suggestion"], session["selected_item"])
+
+    # Step 7: return session
     return session
 
 
