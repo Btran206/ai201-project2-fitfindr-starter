@@ -187,7 +187,7 @@ Query: `"designer ballgown size XXS under $5"`
 
 **One divergence from the spec and why:** The spec's State Management table listed `selected_item` as written by the "select step" and read by both `suggest_outfit` and `create_fit_card`. In the implementation, `create_fit_card` reads `selected_item` directly from the session rather than from a local variable, which matches the spec's intent but wasn't made explicit in the original table.
 
-**AI Usage Transparency:**
+## AI Usage Transparency
 I used AI to help figure out how everything was supposed to flow first before drafting planning.md. I used CLAUDE to help understand the what each tool was supposed to do and its failure cases, understand how sessions are handled, and finally draft up the architecture.
 
 CLAUDE was used to implement the tools and the agent loop based on the specs I chose in planning.md. Claude was also used to generate a test suite to see if all of the tools are working as intended as well as test whether each failure case fails gracefully.
