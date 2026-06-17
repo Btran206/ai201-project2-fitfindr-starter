@@ -211,9 +211,14 @@ if __name__ == "__main__":
         print(f"\nOutfit: {session['outfit_suggestion']}")
         print(f"\nFit card: {session['fit_card']}")
 
+    print("\n--- Session State ---")
+    print(json.dumps(session, indent=2, default=str))
+
     print("\n\n=== No-results path ===\n")
     session2 = run_agent(
         query="designer ballgown size XXS under $5",
         wardrobe=get_example_wardrobe(),
     )
     print(f"Error message: {session2['error']}")
+    print("\n--- Session State ---")
+    print(json.dumps(session2, indent=2, default=str))
